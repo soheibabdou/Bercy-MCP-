@@ -1,0 +1,12 @@
+
+{
+  "name": "bercy-mcp",
+  "version": "2.0.0",
+  "description": "Bercy MCP — Tri-chain AI payment layer. x402 + AC2. Algorand + Celo + Solana. 8 tools.",
+  "type": "module",
+  "scripts": { "start": "tsx bercy-mcp.ts" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "tsx": "^4.0.0"
+  }
+}
