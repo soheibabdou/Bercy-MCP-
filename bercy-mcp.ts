@@ -1,6 +1,6 @@
 // BERCY MCP — THE PAYMENT LAYER FOR ALL AI AGENTS
 // Gives Claude Code payment superpowers:
-// Live FX + Crypto rates, AC2 approval, x402 payments on Celo + Algorand + Solana
+// Live FX + Crypto rates, AC2 approval, x402 payments on Celo + Algorand + Solana + Avalanche
 // Install: add to .mcp.json → Claude pays for anything, anywhere
 import { Server }               from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -12,15 +12,19 @@ import {
 const CELO_URL   = "https://bercy-celo-production.up.railway.app";
 const ALGO_URL   = "https://bercy-x402-production.up.railway.app";
 const SOLANA_URL = "https://bercy-solana-production.up.railway.app";
+const AVAX_URL   = "https://bercy-avalanche-production.up.railway.app";
+
+// ─── CHAIN REGISTRY — add new chains here only ─────────────────
+const CHAINS = [
+    { name: "solana",    url: SOLANA_URL, settlement_ms: 1000, settlement_label: "~1 second",  routing: "Jupiter" },
+    { name: "celo",      url: CELO_URL,   settlement_ms: 1000, settlement_label: "~1 second",  routing: "Mento"   },
+    { name: "avalanche", url: AVAX_URL,   settlement_ms: 2000, settlement_label: "~2 seconds", routing: "Native"  },
+    { name: "algorand",  url: ALGO_URL,   settlement_ms: 4000, settlement_label: "~4 seconds", routing: "Native"  },
+];
 
 const server = new Server(
-    {
-        name:    "bercy-mcp",
-        version: "2.0.0",
-    },
-    {
-        capabilities: { tools: {} },
-    }
+    { name: "bercy-mcp", version: "3.0.0" },
+    { capabilities: { tools: {} } }
 );
 
 // ─── LIST TOOLS ────────────────────────────────────────────────
@@ -28,7 +32,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
         {
             name:        "bercy_health",
-            description: "Check Bercy status on Algorand, Celo and Solana chains. Shows corridors, live rates date, protocols.",
+            description: "Check Bercy status on all chains: Algorand, Celo, Solana and Avalanche. Shows corridors, protocols, block/slot.",
             inputSchema: { type: "object", properties: {}, required: [] },
         },
         {
@@ -37,17 +41,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             inputSchema: {
                 type: "object",
                 properties: {
-                    currency: {
-                        type: "string",
-                        description: "Optional: filter for a specific currency (e.g. 'DZD', 'BTC'). Leave empty for all rates.",
-                    },
+                    currency: { type: "string", description: "Optional: filter for a specific currency (e.g. 'DZD', 'BTC'). Leave empty for all rates." },
                 },
                 required: [],
             },
         },
         {
             name:        "bercy_convert",
-            description: "Convert any amount between any two currencies or crypto assets. Uses live ECB + CoinGecko rates. Works for fiat-to-fiat, fiat-to-crypto, crypto-to-fiat, crypto-to-crypto.",
+            description: "Convert any amount between any two currencies or crypto assets. Uses live ECB + CoinGecko rates.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -60,7 +61,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         {
             name:        "bercy_authorize",
-            description: "Request AC2 human approval before executing a payment. Returns a signed approval_id required for bercy_pay_celo, bercy_pay_algorand or bercy_pay_solana. ALWAYS call this before paying.",
+            description: "Request AC2 human approval before executing a payment. ALWAYS call this before paying on any chain.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -73,38 +74,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             },
         },
         {
-            name:        "bercy_pay_celo",
-            description: "Execute a cross-border FX payment on Celo Mainnet via x402. Costs $0.10 USDC. Settles in ~1 second. Supports fiat, Celo stablecoins, and crypto corridors. Requires prior AC2 approval.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    from:        { type: "string", description: "Source currency (e.g. 'DZD', 'BTC')" },
-                    to:          { type: "string", description: "Target currency (e.g. 'EUR', 'CNGN')" },
-                    amount:      { type: "number", description: "Amount to route" },
-                    approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
-                    x_payment:   { type: "string", description: "x402 payment header (from x402 client)" },
-                },
-                required: ["from", "to", "amount", "approval_id"],
-            },
-        },
-        {
-            name:        "bercy_pay_algorand",
-            description: "Execute a cross-border FX payment on Algorand Mainnet via x402. Costs $0.10 USDC. Settles in ~4 seconds. Requires prior AC2 approval.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    from:        { type: "string", description: "Source currency (e.g. 'DZD')" },
-                    to:          { type: "string", description: "Target currency (e.g. 'EUR')" },
-                    amount:      { type: "number", description: "Amount to route" },
-                    approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
-                    x_payment:   { type: "string", description: "x402 payment header (from x402 client)" },
-                },
-                required: ["from", "to", "amount", "approval_id"],
-            },
-        },
-        {
             name:        "bercy_best_route",
-            description: "Find the best chain and rate to execute a payment. Compares Celo vs Algorand vs Solana for speed, cost, and corridor availability. Returns recommendation with rates.",
+            description: "Find the best chain to execute a payment RIGHT NOW. Checks all chains live — always returns the fastest available one. Use this before paying.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -116,13 +87,58 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             },
         },
         {
-            name:        "bercy_pay_solana",
-            description: "Execute a cross-border FX payment on Solana Mainnet via x402 + Jupiter. Fastest settlement (~1 second). Costs $0.10 USDC. Supports 95+ corridors including Africa, LatAm, Asia, crypto. Requires prior AC2 approval.",
+            name:        "bercy_pay_celo",
+            description: "Execute a cross-border FX payment on Celo Mainnet via x402. Costs $0.10 USDC. Settles in ~1 second. Requires prior AC2 approval.",
             inputSchema: {
                 type: "object",
                 properties: {
-                    from:        { type: "string", description: "Source currency (e.g. 'DZD', 'SOL', 'NGN')" },
-                    to:          { type: "string", description: "Target currency (e.g. 'EUR', 'USDC', 'GBP')" },
+                    from:        { type: "string", description: "Source currency" },
+                    to:          { type: "string", description: "Target currency" },
+                    amount:      { type: "number", description: "Amount to route" },
+                    approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
+                    x_payment:   { type: "string", description: "x402 payment header" },
+                },
+                required: ["from", "to", "amount", "approval_id"],
+            },
+        },
+        {
+            name:        "bercy_pay_algorand",
+            description: "Execute a cross-border FX payment on Algorand Mainnet via x402. Costs $0.10 USDC. Settles in ~4 seconds. Requires prior AC2 approval.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    from:        { type: "string", description: "Source currency" },
+                    to:          { type: "string", description: "Target currency" },
+                    amount:      { type: "number", description: "Amount to route" },
+                    approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
+                    x_payment:   { type: "string", description: "x402 payment header" },
+                },
+                required: ["from", "to", "amount", "approval_id"],
+            },
+        },
+        {
+            name:        "bercy_pay_solana",
+            description: "Execute a cross-border FX payment on Solana Mainnet via x402 + Jupiter. Settles in ~1 second. Costs $0.10 USDC. Requires prior AC2 approval.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    from:        { type: "string", description: "Source currency" },
+                    to:          { type: "string", description: "Target currency" },
+                    amount:      { type: "number", description: "Amount to route" },
+                    approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
+                    x_payment:   { type: "string", description: "x402 payment header" },
+                },
+                required: ["from", "to", "amount", "approval_id"],
+            },
+        },
+        {
+            name:        "bercy_pay_avalanche",
+            description: "Execute a cross-border FX payment on Avalanche C-Chain via x402. Costs $0.10 USDC. Settles in ~2 seconds. Requires prior AC2 approval.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    from:        { type: "string", description: "Source currency" },
+                    to:          { type: "string", description: "Target currency" },
                     amount:      { type: "number", description: "Amount to route" },
                     approval_id: { type: "string", description: "AC2 approval_id from bercy_authorize" },
                     x_payment:   { type: "string", description: "x402 payment header" },
@@ -143,20 +159,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
             // ── HEALTH ──────────────────────────────────────────
             case "bercy_health": {
-                const [celo, algo, solana] = await Promise.all([
-                    fetch(`${CELO_URL}/api/health`).then(r => r.json()),
-                    fetch(`${ALGO_URL}/api/health`).then(r => r.json()),
-                    fetch(`${SOLANA_URL}/api/health`).then(r => r.json()),
-                ]);
+                const results = await Promise.all(
+                    CHAINS.map(c =>
+                        fetch(`${c.url}/api/health`)
+                            .then(r => r.json())
+                            .catch(() => ({ status: "offline" }))
+                    )
+                );
+                const chains: Record<string, unknown> = {};
+                CHAINS.forEach((c, i) => { chains[c.name] = results[i]; });
                 return {
                     content: [{
                         type: "text",
                         text: JSON.stringify({
                             bercy_mcp: "operational",
-                            version: "2.0.0 — Tri-Chain",
-                            chains: { celo, algorand: algo, solana },
+                            version: "3.0.0 — Quad-Chain",
+                            chains,
                             total_corridors: 95,
-                            tip: "Use bercy_rates to see all available currencies",
+                            tip: "Use bercy_best_route to find the fastest chain right now",
                         }, null, 2)
                     }]
                 };
@@ -202,8 +222,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             estimated_output: output,
                             path: `${from.toUpperCase()} → USDC → ${to.toUpperCase()}`,
                             rates_source: "ECB + CoinGecko + Mento",
-                            rates_date: data.lastUpdated,
-                            next_step: "Call bercy_authorize then bercy_pay_solana / bercy_pay_celo to execute",
+                            next_step: "Call bercy_best_route then bercy_authorize then pay",
                         }, null, 2)
                     }]
                 };
@@ -219,6 +238,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 });
                 const data = await res.json();
                 return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+            }
+
+            // ── BEST ROUTE — fully dynamic, always fastest ──────
+            case "bercy_best_route": {
+                const { from, to, amount } = a as { from: string; to: string; amount: number };
+
+                // Check rates + all chains in parallel
+                const [ratesRes, ...healthResults] = await Promise.all([
+                    fetch(`${CELO_URL}/api/rates`).then(r => r.json()) as Promise<{ rates: Record<string, number> }>,
+                    ...CHAINS.map(c =>
+                        fetch(`${c.url}/api/health`)
+                            .then(r => r.json())
+                            .then(h => ({ ...c, online: true, corridors: h.totalCorridors || h.corridors || 95 }))
+                            .catch(() => ({ ...c, online: false, corridors: 0 }))
+                    )
+                ]);
+
+                const rates    = ratesRes.rates;
+                const fromRate = rates[from.toUpperCase()];
+                const toRate   = rates[to.toUpperCase()];
+                const canRoute = !!(fromRate && toRate);
+
+                // Sort online chains by speed (fastest first)
+                const ranked = [...healthResults]
+                    .filter(c => c.online)
+                    .sort((a, b) => a.settlement_ms - b.settlement_ms);
+
+                const best = ranked[0];
+
+                return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify({
+                            from: from.toUpperCase(), to: to.toUpperCase(), amount,
+                            can_route: canRoute,
+                            recommended: best?.name ?? "solana",
+                            reason: `Fastest online chain — ${best?.settlement_label ?? "~1 second"} settlement`,
+                            ranking: ranked.map((c, i) => ({
+                                rank: i + 1,
+                                chain: c.name,
+                                settlement_time: c.settlement_label,
+                                cost: "$0.10 USDC",
+                                corridors: c.corridors,
+                                routing: c.routing,
+                                online: c.online,
+                            })),
+                            next_steps: [
+                                "1. Call bercy_authorize",
+                                `2. Call bercy_pay_${best?.name ?? "solana"}`,
+                                `3. Settles in ${best?.settlement_label ?? "~1 second"}`,
+                            ],
+                        }, null, 2)
+                    }]
+                };
             }
 
             // ── PAY CELO ────────────────────────────────────────
@@ -243,34 +316,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
             }
 
-            // ── BEST ROUTE ──────────────────────────────────────
-            case "bercy_best_route": {
-                const { from, to, amount } = a as { from: string; to: string; amount: number };
-                const [celoRates, algoHealth] = await Promise.all([
-                    fetch(`${CELO_URL}/api/rates`).then(r => r.json()) as Promise<{ rates: Record<string, number>; lastUpdated: string }>,
-                    fetch(`${ALGO_URL}/api/health`).then(r => r.json()) as Promise<{ corridors: number }>,
-                ]);
-                const rates    = celoRates.rates;
-                const fromRate = rates[from.toUpperCase()];
-                const toRate   = rates[to.toUpperCase()];
-                const canRoute = !!(fromRate && toRate);
-                return {
-                    content: [{
-                        type: "text",
-                        text: JSON.stringify({
-                            from: from.toUpperCase(), to: to.toUpperCase(), amount,
-                            can_route: canRoute,
-                            recommended: "solana",
-                            reason: "Fastest settlement, Jupiter routing, 95 corridors",
-                            solana:   { available: canRoute, settlement_time: "~1 second", cost: "$0.10 USDC", corridors: 95, routing: "Jupiter" },
-                            celo:     { available: canRoute, settlement_time: "~1 second", cost: "$0.10 USDC", corridors: 79 },
-                            algorand: { available: algoHealth.corridors > 0, settlement_time: "~4 seconds", cost: "$0.10 USDC", corridors: algoHealth.corridors },
-                            next_steps: ["1. Call bercy_authorize", "2. Call bercy_pay_solana", "3. Settles in ~1 second"],
-                        }, null, 2)
-                    }]
-                };
-            }
-
             // ── PAY SOLANA ───────────────────────────────────────
             case "bercy_pay_solana": {
                 const { from, to, amount, x_payment } = a as { from: string; to: string; amount: number; approval_id: string; x_payment?: string };
@@ -279,6 +324,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const res  = await fetch(`${SOLANA_URL}/api/orchestrate`, { method: "POST", headers, body: JSON.stringify({ from, to, amount }) });
                 const data = await res.json();
                 if (res.status === 402) return { content: [{ type: "text", text: JSON.stringify({ status: "payment_required", message: "Send $0.10 USDC on Solana Mainnet.", payment_info: data }, null, 2) }] };
+                return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+            }
+
+            // ── PAY AVALANCHE ────────────────────────────────────
+            case "bercy_pay_avalanche": {
+                const { from, to, amount, x_payment } = a as { from: string; to: string; amount: number; approval_id: string; x_payment?: string };
+                const headers: Record<string, string> = { "Content-Type": "application/json" };
+                if (x_payment) headers["X-PAYMENT"] = x_payment;
+                const res  = await fetch(`${AVAX_URL}/api/orchestrate`, { method: "POST", headers, body: JSON.stringify({ from, to, amount }) });
+                const data = await res.json();
+                if (res.status === 402) return { content: [{ type: "text", text: JSON.stringify({ status: "payment_required", message: "Send $0.10 USDC on Avalanche C-Chain (chain 43114).", payment_info: data }, null, 2) }] };
                 return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
             }
 
@@ -297,7 +353,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("🦅 Bercy MCP v2.0 — Tri-Chain payment superpowers active");
+    console.error("🦅 Bercy MCP v3.0.0 — Quad-Chain payment superpowers active");
 }
 
 main().catch(console.error);
+</thinking>
+
+**The fix — CHAIN REGISTRY:**
+```typescript
+// Add new chains HERE ONLY — routing auto-updates
+const CHAINS = [
+    { name: "solana",    settlement_ms: 1000 }, // fastest
+    { name: "celo",      settlement_ms: 1000 },
+    { name: "avalanche", settlement_ms: 2000 },
+    { name: "algorand",  settlement_ms: 4000 }, // slowest
+];
